@@ -1,0 +1,5719 @@
+-- ItemsInventoryClient
+-- FULL REPLACEMENT
+--
+-- Supports:
+--   Normal: 1 egg -> 1 reward
+--   Double Crack Event: 1 egg -> 2 rewards
+--   2X Eggs Event + 2X Eggs Gamepass: 1 egg -> 4 rewards
+--
+-- Mutations:
+--   Shiny
+--   Gold
+--   Diamond
+--   Rainbow
+--   Void
+--
+-- Mutation models are searched in:
+--   Workspace > Shiny items
+--   Workspace > Gold items
+--   Workspace > Diamond items
+--   Workspace > Rainbow items
+--   Workspace > Void items
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Debris = game:GetService("Debris")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+if playerGui:FindFirstChild("ItemsGui") then
+	return
+end
+
+local ItemConfig =
+	require(
+		ReplicatedStorage:WaitForChild("ItemConfig")
+	)
+
+local ItemViewportUtils =
+	require(
+		ReplicatedStorage:WaitForChild("ItemViewportUtils")
+	)
+
+local CrackRequestEvent =
+	ReplicatedStorage:WaitForChild(
+		"CrackRequestEvent"
+	)
+
+local CrackConfirmEvent =
+	ReplicatedStorage:WaitForChild(
+		"CrackConfirmEvent"
+	)
+
+local InventoryRequestEvent =
+	ReplicatedStorage:WaitForChild(
+		"InventoryRequestEvent"
+	)
+
+local InventorySyncEvent =
+	ReplicatedStorage:WaitForChild(
+		"InventorySyncEvent"
+	)
+
+local SellAllEvent =
+	ReplicatedStorage:WaitForChild(
+		"SellAllEvent"
+	)
+
+local SellAllConfirmEvent =
+	ReplicatedStorage:WaitForChild(
+		"SellAllConfirmEvent"
+	)
+
+local ITEM_RARITY_FOLDERS = {
+
+	"Common normal items",
+
+	"Uncommon normal items",
+
+	"Rare normal items",
+
+	"Epic normal items",
+
+	"Legendary normal items",
+
+	"Mythic normal items",
+
+	"Godly normal items",
+
+	"Secret normal items",
+
+	"Drifted normal items",
+
+	"Tidal normal items",
+
+	"Mystic normal items",
+
+	"Ancient normal items",
+
+	"Royal normal items",
+
+	"Abyssal normal items",
+
+	"Divine normal items",
+
+	"Atlantean normal items",
+
+}
+
+local MUTATION_FOLDERS = {
+
+	Shiny = "Shiny items",
+
+	Gold = "Gold items",
+
+	Diamond = "Diamond items",
+
+	Rainbow = "Rainbow items",
+
+	Void = "Void items",
+
+}
+
+local CRACK_COOLDOWN = 2
+
+local REWARD_SPACING = 3
+
+local localInventory = {}
+
+local isRevealing = false
+
+local isCooldown = false
+
+local autoCrack = false
+
+local function createOverheadValue()
+end
+
+local function updateOverheadValue()
+end
+
+local function getItemMutation(itemName)
+
+	if not itemName then
+		return nil, nil
+	end
+
+	local name =
+		tostring(itemName)
+
+	if name:sub(1, 6) == "Shiny " then
+		return "Shiny", name:sub(7)
+	end
+
+	if name:sub(1, 5) == "Gold " then
+		return "Gold", name:sub(6)
+	end
+
+	if name:sub(1, 8) == "Diamond " then
+		return "Diamond", name:sub(9)
+	end
+
+	if name:sub(1, 8) == "Rainbow " then
+		return "Rainbow", name:sub(9)
+	end
+
+	if name:sub(1, 5) == "Void " then
+		return "Void", name:sub(6)
+	end
+
+	return nil, name
+
+end
+
+local function getBaseItemName(itemName)
+
+	local _, baseName =
+		getItemMutation(itemName)
+
+	return baseName
+
+end
+
+local function findItemModel(itemName, rarity)
+
+	if not itemName then
+		return nil
+	end
+
+	local mutation, baseName =
+		getItemMutation(itemName)
+
+	if not baseName
+		or baseName == "" then
+
+		return nil
+	end
+
+	if mutation then
+
+		local mutationFolderName =
+			MUTATION_FOLDERS[mutation]
+
+		local mutationFolder =
+			mutationFolderName
+			and workspace:FindFirstChild(
+				mutationFolderName,
+				true
+			)
+
+		if mutationFolder then
+
+			if rarity
+				and tostring(rarity) ~= "" then
+
+				local rarityFolderName =
+					tostring(rarity)
+					.. " normal items"
+
+				local rarityFolder =
+					mutationFolder:FindFirstChild(
+						rarityFolderName,
+						true
+					)
+
+				if rarityFolder then
+
+					if (
+						rarityFolder:IsA("Model")
+							or rarityFolder:IsA("BasePart")
+						)
+							and (
+								rarityFolder.Name == baseName
+								or rarityFolder.Name == itemName
+							) then
+
+						return rarityFolder
+
+					end
+
+					for _, descendant in ipairs(
+						rarityFolder:GetDescendants()
+						) do
+
+						if (
+							descendant.Name == baseName
+								or descendant.Name == itemName
+							)
+								and (
+									descendant:IsA("Model")
+									or descendant:IsA("BasePart")
+								) then
+
+							return descendant
+
+						end
+
+					end
+
+				end
+
+			end
+
+			for _, descendant in ipairs(
+				mutationFolder:GetDescendants()
+				) do
+
+				if (
+					descendant.Name == baseName
+						or descendant.Name == itemName
+					)
+						and (
+							descendant:IsA("Model")
+							or descendant:IsA("BasePart")
+						) then
+
+					return descendant
+
+				end
+
+			end
+
+		end
+
+	end
+
+	if rarity
+		and tostring(rarity) ~= "" then
+
+		local rarityFolderName =
+			tostring(rarity)
+			.. " normal items"
+
+		local folder =
+			workspace:FindFirstChild(
+				rarityFolderName,
+				true
+			)
+
+		if folder then
+
+			if (
+				folder:IsA("Model")
+					or folder:IsA("BasePart")
+				)
+					and folder.Name == baseName then
+
+				return folder
+
+			end
+
+			for _, descendant in ipairs(
+				folder:GetDescendants()
+				) do
+
+				if descendant.Name == baseName
+					and (
+						descendant:IsA("Model")
+							or descendant:IsA("BasePart")
+					) then
+
+					return descendant
+
+				end
+
+			end
+
+		end
+
+	end
+
+	for _, folderName in ipairs(
+		ITEM_RARITY_FOLDERS
+		) do
+
+		local folder =
+			workspace:FindFirstChild(
+				folderName,
+				true
+			)
+
+		if folder then
+
+			if (
+				folder:IsA("Model")
+					or folder:IsA("BasePart")
+				)
+					and folder.Name == baseName then
+
+				return folder
+
+			end
+
+			for _, descendant in ipairs(
+				folder:GetDescendants()
+				) do
+
+				if descendant.Name == baseName
+					and (
+						descendant:IsA("Model")
+							or descendant:IsA("BasePart")
+					) then
+
+					return descendant
+
+				end
+
+			end
+
+		end
+
+	end
+
+	return nil
+
+end
+
+-- =========================================================
+-- SCREEN GUI
+-- =========================================================
+
+local gui =
+	Instance.new("ScreenGui")
+
+gui.Name =
+	"ItemsGui"
+
+gui.ResetOnSpawn =
+	false
+
+gui.IgnoreGuiInset =
+	true
+
+gui.ZIndexBehavior =
+	Enum.ZIndexBehavior.Sibling
+
+gui.DisplayOrder =
+	10
+
+gui.Parent =
+	playerGui
+
+-- =========================================================
+-- ITEMS BUTTON
+-- =========================================================
+
+local itemsButton =
+	Instance.new("TextButton")
+
+itemsButton.Name =
+	"ItemsButton"
+
+itemsButton.Size =
+	UDim2.new(
+		0,
+		110,
+		0,
+		42
+	)
+
+itemsButton.Position =
+	UDim2.new(
+		1,
+		-125,
+		0,
+		64
+	)
+
+itemsButton.BackgroundColor3 =
+	Color3.fromRGB(
+		70,
+		90,
+		160
+	)
+
+itemsButton.BorderSizePixel =
+	0
+
+itemsButton.Text =
+	"ITEMS"
+
+itemsButton.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+itemsButton.TextSize =
+	18
+
+itemsButton.Font =
+	Enum.Font.FredokaOne
+
+itemsButton.ZIndex =
+	10
+
+itemsButton.Parent =
+	gui
+
+local itemsBtnCorner =
+	Instance.new("UICorner")
+
+itemsBtnCorner.CornerRadius =
+	UDim.new(
+		0,
+		8
+	)
+
+itemsBtnCorner.Parent =
+	itemsButton
+
+-- =========================================================
+-- EGGS BUTTON
+-- =========================================================
+
+local eggsButton =
+	Instance.new("TextButton")
+
+eggsButton.Name =
+	"EggsButton"
+
+eggsButton.Size =
+	UDim2.new(
+		0,
+		110,
+		0,
+		42
+	)
+
+eggsButton.Position =
+	UDim2.new(
+		0.5,
+		5,
+		0,
+		10
+	)
+
+eggsButton.BackgroundColor3 =
+	Color3.fromRGB(
+		160,
+		90,
+		70
+	)
+
+eggsButton.BorderSizePixel =
+	0
+
+eggsButton.Text =
+	"EGGS"
+
+eggsButton.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+eggsButton.TextSize =
+	18
+
+eggsButton.Font =
+	Enum.Font.FredokaOne
+
+eggsButton.ZIndex =
+	10
+
+eggsButton.Parent =
+	gui
+
+local eggsBtnCorner =
+	Instance.new("UICorner")
+
+eggsBtnCorner.CornerRadius =
+	UDim.new(
+		0,
+		8
+	)
+
+eggsBtnCorner.Parent =
+	eggsButton
+
+eggsButton.MouseButton1Click:Connect(
+	function()
+
+		local character =
+			player.Character
+
+		if not character then
+			return
+		end
+
+		local target =
+			workspace:FindFirstChild(
+				"egg teleport",
+				true
+			)
+
+		if target then
+
+			character:PivotTo(
+				target:GetPivot()
+			)
+
+		end
+
+	end
+)
+
+-- =========================================================
+-- SELL BUTTON
+-- =========================================================
+
+local sellButton =
+	Instance.new("TextButton")
+
+sellButton.Name =
+	"SellButton"
+
+sellButton.Size =
+	UDim2.new(
+		0,
+		110,
+		0,
+		42
+	)
+
+sellButton.Position =
+	UDim2.new(
+		0.5,
+		-115,
+		0,
+		10
+	)
+
+sellButton.BackgroundColor3 =
+	Color3.fromRGB(
+		70,
+		140,
+		90
+	)
+
+sellButton.BorderSizePixel =
+	0
+
+sellButton.Text =
+	"SELL"
+
+sellButton.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+sellButton.TextSize =
+	18
+
+sellButton.Font =
+	Enum.Font.FredokaOne
+
+sellButton.ZIndex =
+	10
+
+sellButton.Parent =
+	gui
+
+local sellBtnCorner =
+	Instance.new("UICorner")
+
+sellBtnCorner.CornerRadius =
+	UDim.new(
+		0,
+		8
+	)
+
+sellBtnCorner.Parent =
+	sellButton
+
+sellButton.MouseButton1Click:Connect(
+	function()
+
+		local character =
+			player.Character
+
+		if not character then
+			return
+		end
+
+		local target =
+			workspace:FindFirstChild(
+				"sell teleport",
+				true
+			)
+
+		if target then
+
+			character:PivotTo(
+				target:GetPivot()
+			)
+
+		end
+
+	end
+)
+
+-- =========================================================
+-- ITEMS PANEL
+-- =========================================================
+
+local itemsPanel =
+	Instance.new("Frame")
+
+itemsPanel.Name =
+	"ItemsPanel"
+
+itemsPanel.Size =
+	UDim2.new(
+		0,
+		440,
+		0,
+		520
+	)
+
+itemsPanel.Position =
+	UDim2.new(
+		0.5,
+		-220,
+		0.5,
+		-260
+	)
+
+itemsPanel.BackgroundColor3 =
+	Color3.fromRGB(
+		22,
+		22,
+		32
+	)
+
+itemsPanel.BorderSizePixel =
+	0
+
+itemsPanel.Visible =
+	false
+
+itemsPanel.ZIndex =
+	20
+
+itemsPanel.Parent =
+	gui
+
+local panelCorner =
+	Instance.new("UICorner")
+
+panelCorner.CornerRadius =
+	UDim.new(
+		0,
+		12
+	)
+
+panelCorner.Parent =
+	itemsPanel
+
+local panelStroke =
+	Instance.new("UIStroke")
+
+panelStroke.Color =
+	Color3.fromRGB(
+		90,
+		90,
+		130
+	)
+
+panelStroke.Thickness =
+	2
+
+panelStroke.Parent =
+	itemsPanel
+
+-- =========================================================
+-- HEADER
+-- =========================================================
+
+local panelHeader =
+	Instance.new("TextLabel")
+
+panelHeader.Size =
+	UDim2.new(
+		1,
+		0,
+		0,
+		44
+	)
+
+panelHeader.BackgroundTransparency =
+	1
+
+panelHeader.Text =
+	"ITEMS"
+
+panelHeader.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+panelHeader.TextSize =
+	24
+
+panelHeader.Font =
+	Enum.Font.FredokaOne
+
+panelHeader.ZIndex =
+	21
+
+panelHeader.Parent =
+	itemsPanel
+
+-- =========================================================
+-- CLOSE
+-- =========================================================
+
+local panelClose =
+	Instance.new("TextButton")
+
+panelClose.Name =
+	"CloseBtn"
+
+panelClose.Size =
+	UDim2.new(
+		0,
+		36,
+		0,
+		36
+	)
+
+panelClose.Position =
+	UDim2.new(
+		1,
+		-42,
+		0,
+		4
+	)
+
+panelClose.BackgroundColor3 =
+	Color3.fromRGB(
+		180,
+		70,
+		70
+	)
+
+panelClose.BorderSizePixel =
+	0
+
+panelClose.Text =
+	"X"
+
+panelClose.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+panelClose.TextSize =
+	18
+
+panelClose.Font =
+	Enum.Font.FredokaOne
+
+panelClose.ZIndex =
+	22
+
+panelClose.Parent =
+	itemsPanel
+
+local panelCloseCorner =
+	Instance.new("UICorner")
+
+panelCloseCorner.CornerRadius =
+	UDim.new(
+		0,
+		8
+	)
+
+panelCloseCorner.Parent =
+	panelClose
+
+-- =========================================================
+-- SCROLL
+-- =========================================================
+
+local itemScroll =
+	Instance.new("ScrollingFrame")
+
+itemScroll.Name =
+	"ItemScroll"
+
+itemScroll.Size =
+	UDim2.new(
+		1,
+		-20,
+		1,
+		-56
+	)
+
+itemScroll.Position =
+	UDim2.new(
+		0,
+		10,
+		0,
+		48
+	)
+
+itemScroll.BackgroundTransparency =
+	1
+
+itemScroll.BorderSizePixel =
+	0
+
+itemScroll.ScrollBarThickness =
+	6
+
+itemScroll.AutomaticCanvasSize =
+	Enum.AutomaticSize.Y
+
+itemScroll.ZIndex =
+	21
+
+itemScroll.Parent =
+	itemsPanel
+
+local listLayout =
+	Instance.new("UIListLayout")
+
+listLayout.Padding =
+	UDim.new(
+		0,
+		8
+	)
+
+listLayout.SortOrder =
+	Enum.SortOrder.LayoutOrder
+
+listLayout.Parent =
+	itemScroll
+
+-- =========================================================
+-- CRACK BUTTON
+-- =========================================================
+
+local crackButton =
+	Instance.new("TextButton")
+
+crackButton.Name =
+	"CrackButton"
+
+crackButton.Size =
+	UDim2.new(
+		0,
+		150,
+		0,
+		54
+	)
+
+crackButton.Position =
+	UDim2.new(
+		0.5,
+	-133,
+		1,
+		-70
+	)
+
+crackButton.BackgroundColor3 =
+	Color3.fromRGB(
+		230,
+		140,
+		40
+	)
+
+crackButton.BorderSizePixel =
+	0
+
+crackButton.Text =
+	"CRACK EGG"
+
+crackButton.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+crackButton.TextSize =
+	20
+
+crackButton.Font =
+	Enum.Font.FredokaOne
+
+crackButton.Visible =
+	false
+
+crackButton.ZIndex =
+	50
+
+crackButton.Parent =
+	gui
+
+local crackCorner =
+	Instance.new("UICorner")
+
+crackCorner.CornerRadius =
+	UDim.new(
+		0,
+		10
+	)
+
+crackCorner.Parent =
+	crackButton
+
+-- =========================================================
+-- AUTO CRACK
+-- =========================================================
+
+local autoButton =
+	Instance.new("TextButton")
+
+autoButton.Name =
+	"AutoCrackButton"
+
+autoButton.Size =
+	UDim2.new(
+		0,
+		100,
+		0,
+		54
+	)
+
+autoButton.Position =
+	UDim2.new(
+		0.5,
+		33,
+		1,
+		-70
+	)
+
+autoButton.BackgroundColor3 =
+	Color3.fromRGB(
+		90,
+		90,
+		110
+	)
+
+autoButton.BorderSizePixel =
+	0
+
+autoButton.Text =
+	"AUTO: OFF"
+
+autoButton.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+autoButton.TextSize =
+	18
+
+autoButton.Font =
+	Enum.Font.FredokaOne
+
+autoButton.Visible =
+	false
+
+autoButton.ZIndex =
+	50
+
+autoButton.Parent =
+	gui
+
+local autoCorner =
+	Instance.new("UICorner")
+
+autoCorner.CornerRadius =
+	UDim.new(
+		0,
+		10
+	)
+
+autoCorner.Parent =
+	autoButton
+
+-- =========================================================
+-- REVEAL OVERLAY
+-- =========================================================
+
+local reveal =
+	Instance.new("Frame")
+
+reveal.Name =
+	"RevealOverlay"
+
+reveal.Size =
+	UDim2.new(
+		1,
+		0,
+		1,
+		0
+	)
+
+reveal.BackgroundColor3 =
+	Color3.fromRGB(
+		0,
+		0,
+		0
+	)
+
+reveal.BackgroundTransparency =
+	1
+
+reveal.Visible =
+	false
+
+reveal.ZIndex =
+	100
+
+reveal.Parent =
+	gui
+
+-- =========================================================
+-- REVEAL TITLE
+-- =========================================================
+
+local revealTitle =
+	Instance.new("TextLabel")
+
+revealTitle.Name =
+	"RevealTitle"
+
+revealTitle.Size =
+	UDim2.new(
+		0,
+		600,
+		0,
+		50
+	)
+
+revealTitle.Position =
+	UDim2.new(
+		0.5,
+		-300,
+		0.5,
+		-170
+	)
+
+revealTitle.BackgroundTransparency =
+	1
+
+revealTitle.Text =
+	""
+
+revealTitle.TextColor3 =
+	Color3.fromRGB(
+		255,
+		255,
+		255
+	)
+
+revealTitle.TextSize =
+	30
+
+revealTitle.Font =
+	Enum.Font.FredokaOne
+
+revealTitle.Visible =
+	false
+
+revealTitle.ZIndex =
+	102
+
+revealTitle.Parent =
+	reveal
+
+-- =========================================================
+-- REVEAL RARITY
+-- =========================================================
+
+local revealRarity =
+	Instance.new("TextLabel")
+
+revealRarity.Name =
+	"RevealRarity"
+
+revealRarity.Size =
+	UDim2.new(
+		0,
+		600,
+		0,
+		35
+	)
+
+revealRarity.Position =
+	UDim2.new(
+		0.5,
+		-300,
+		0.5,
+		-125
+	)
+
+revealRarity.BackgroundTransparency =
+	1
+
+revealRarity.Text =
+	""
+
+revealRarity.TextSize =
+	22
+
+revealRarity.Font =
+	Enum.Font.FredokaOne
+
+revealRarity.Visible =
+	false
+
+revealRarity.ZIndex =
+	102
+
+revealRarity.Parent =
+	reveal
+
+-- =========================================================
+-- REVEAL SUB
+-- =========================================================
+
+local revealSub =
+	Instance.new("TextLabel")
+
+revealSub.Name =
+	"RevealSub"
+
+revealSub.Size =
+	UDim2.new(
+		0,
+		600,
+		0,
+		30
+	)
+
+revealSub.Position =
+	UDim2.new(
+		0.5,
+		-300,
+		0.5,
+		-90
+	)
+
+revealSub.BackgroundTransparency =
+	1
+
+revealSub.Text =
+	"Added to your Items inventory!"
+
+revealSub.TextColor3 =
+	Color3.fromRGB(
+		200,
+		200,
+		210
+	)
+
+revealSub.TextSize =
+	16
+
+revealSub.Font =
+	Enum.Font.FredokaOne
+
+revealSub.Visible =
+	false
+
+revealSub.ZIndex =
+	102
+
+revealSub.Parent =
+	reveal
+
+local revealSubStroke =
+	Instance.new("UIStroke")
+
+revealSubStroke.Color =
+	Color3.new(
+		0,
+		0,
+		0
+	)
+
+revealSubStroke.Thickness =
+	2
+
+revealSubStroke.Parent =
+	revealSub
+
+-- =========================================================
+-- RARITY COLOR
+-- =========================================================
+
+local function rarityColor(rarity)
+
+	return ItemConfig.RARITY_COLORS[rarity]
+		or Color3.fromRGB(
+			200,
+			200,
+			200
+		)
+
+end
+
+-- =========================================================
+-- CLEAR FRAME
+-- =========================================================
+
+local function clearChildrenOf(frame)
+
+	for _, child in ipairs(
+		frame:GetChildren()
+		) do
+
+		if not child:IsA(
+			"UIListLayout"
+			) then
+
+			child:Destroy()
+
+		end
+
+	end
+
+end
+
+-- =========================================================
+-- ITEM CARD
+-- =========================================================
+
+local function buildItemCard(
+	itemName,
+	data
+)
+
+	local card =
+		Instance.new("Frame")
+
+	card.Name =
+		"Card_" .. itemName
+
+	card.Size =
+		UDim2.new(
+			1,
+			0,
+			0,
+			100
+		)
+
+	card.BackgroundColor3 =
+		Color3.fromRGB(
+			38,
+			38,
+			52
+		)
+
+	card.BorderSizePixel =
+		0
+
+	card.ZIndex =
+		22
+
+	card.Parent =
+		itemScroll
+
+	local cardCorner =
+		Instance.new("UICorner")
+
+	cardCorner.CornerRadius =
+		UDim.new(
+			0,
+			8
+		)
+
+	cardCorner.Parent =
+		card
+
+	local cardStroke =
+		Instance.new("UIStroke")
+
+	cardStroke.Color =
+		rarityColor(
+			data.rarity
+		)
+
+	cardStroke.Thickness =
+		2
+
+	cardStroke.Parent =
+		card
+
+	local source =
+		findItemModel(
+			itemName,
+			data.rarity
+		)
+
+	if source then
+
+		pcall(function()
+
+			ItemViewportUtils.createItemViewport(
+
+				card,
+
+				source,
+
+				UDim2.new(
+					0,
+					90,
+					0,
+					90
+				),
+
+				UDim2.new(
+					0,
+					6,
+					0,
+					5
+				)
+
+			)
+
+		end)
+
+	else
+
+		local missing =
+			Instance.new("TextLabel")
+
+		missing.Size =
+			UDim2.new(
+				0,
+				90,
+				0,
+				90
+			)
+
+		missing.Position =
+			UDim2.new(
+				0,
+				6,
+				0,
+				5
+			)
+
+		missing.BackgroundColor3 =
+			Color3.fromRGB(
+				18,
+				18,
+				28
+			)
+
+		missing.Text =
+			"?"
+
+		missing.TextColor3 =
+			Color3.fromRGB(
+				255,
+				255,
+				255
+			)
+
+		missing.TextSize =
+			30
+
+		missing.Font =
+			Enum.Font.FredokaOne
+
+		missing.ZIndex =
+			23
+
+		missing.Parent =
+			card
+
+	end
+
+	local nameLabel =
+		Instance.new("TextLabel")
+
+	nameLabel.Size =
+		UDim2.new(
+			1,
+			-110,
+			0,
+			30
+		)
+
+	nameLabel.Position =
+		UDim2.new(
+			0,
+			104,
+			0,
+			12
+		)
+
+	nameLabel.BackgroundTransparency =
+		1
+
+	nameLabel.Text =
+		itemName
+
+	nameLabel.TextXAlignment =
+		Enum.TextXAlignment.Left
+
+	nameLabel.TextColor3 =
+		Color3.fromRGB(
+			255,
+			255,
+			255
+		)
+
+	nameLabel.TextSize =
+		18
+
+	nameLabel.Font =
+		Enum.Font.FredokaOne
+
+	nameLabel.ZIndex =
+		23
+
+	nameLabel.Parent =
+		card
+
+	local rarityLabel =
+		Instance.new("TextLabel")
+
+	rarityLabel.Size =
+		UDim2.new(
+			1,
+			-110,
+			0,
+			24
+		)
+
+	rarityLabel.Position =
+		UDim2.new(
+			0,
+			104,
+			0,
+			44
+		)
+
+	rarityLabel.BackgroundTransparency =
+		1
+
+	rarityLabel.Text =
+		string.upper(
+			tostring(
+				data.rarity
+			)
+		)
+
+	rarityLabel.TextXAlignment =
+		Enum.TextXAlignment.Left
+
+	rarityLabel.TextColor3 =
+		rarityColor(
+			data.rarity
+		)
+
+	rarityLabel.TextSize =
+		16
+
+	rarityLabel.Font =
+		Enum.Font.FredokaOne
+
+	rarityLabel.ZIndex =
+		23
+
+	rarityLabel.Parent =
+		card
+
+	local qtyLabel =
+		Instance.new("TextLabel")
+
+	qtyLabel.Size =
+		UDim2.new(
+			0,
+			120,
+			0,
+			30
+		)
+
+	qtyLabel.Position =
+		UDim2.new(
+			1,
+			-126,
+			0,
+			60
+		)
+
+	qtyLabel.BackgroundTransparency =
+		1
+
+	qtyLabel.Text =
+		"x"
+		.. tostring(
+			data.quantity
+		)
+
+	qtyLabel.TextXAlignment =
+		Enum.TextXAlignment.Right
+
+	qtyLabel.TextColor3 =
+		Color3.fromRGB(
+			255,
+			215,
+			0
+		)
+
+	qtyLabel.TextSize =
+		22
+
+	qtyLabel.Font =
+		Enum.Font.FredokaOne
+
+	qtyLabel.ZIndex =
+		23
+
+	qtyLabel.Parent =
+		card
+
+end
+
+-- =========================================================
+-- REFRESH INVENTORY
+-- =========================================================
+
+local function refreshItemsPanel()
+
+	clearChildrenOf(
+		itemScroll
+	)
+
+	local entries = {}
+
+	for name, data in pairs(
+		localInventory
+		) do
+
+		if data
+			and data.quantity
+			and data.quantity > 0 then
+
+			table.insert(
+				entries,
+				{
+					name = name,
+					data = data
+				}
+			)
+
+		end
+
+	end
+
+	if #entries == 0 then
+
+		local empty =
+			Instance.new("TextLabel")
+
+		empty.Size =
+			UDim2.new(
+				1,
+				0,
+				0,
+				60
+			)
+
+		empty.BackgroundTransparency =
+			1
+
+		empty.Text =
+			"No items yet. Crack an egg!"
+
+		empty.TextColor3 =
+			Color3.fromRGB(
+				180,
+				180,
+				190
+			)
+
+		empty.TextSize =
+			16
+
+		empty.Font =
+			Enum.Font.FredokaOne
+
+		empty.TextXAlignment =
+			Enum.TextXAlignment.Center
+
+		empty.ZIndex =
+			22
+
+		empty.Parent =
+			itemScroll
+
+		return
+
+	end
+
+	table.sort(
+		entries,
+		function(a, b)
+
+			local ra =
+				table.find(
+					ItemConfig.RARITIES,
+					a.data.rarity
+				)
+				or 0
+
+			local rb =
+				table.find(
+					ItemConfig.RARITIES,
+					b.data.rarity
+				)
+				or 0
+
+			if ra == rb then
+				return a.name < b.name
+			end
+
+			return ra > rb
+
+		end
+	)
+
+	for _, entry in ipairs(
+		entries
+		) do
+
+		buildItemCard(
+			entry.name,
+			entry.data
+		)
+
+	end
+
+end
+
+-- =========================================================
+-- PANEL
+-- =========================================================
+
+local function toggleItems()
+
+	itemsPanel.Visible =
+		not itemsPanel.Visible
+
+	if itemsPanel.Visible then
+
+		InventoryRequestEvent:
+			FireServer()
+
+		refreshItemsPanel()
+
+	end
+
+end
+
+itemsButton.MouseButton1Click:Connect(
+	toggleItems
+)
+
+panelClose.MouseButton1Click:Connect(
+	function()
+
+		itemsPanel.Visible =
+			false
+
+	end
+)
+
+-- =========================================================
+-- CRACK BUTTON
+-- =========================================================
+
+local function updateCrackButton()
+
+	local ownedEgg =
+		player:FindFirstChild(
+			"OwnedEgg"
+		)
+
+	local hasEgg =
+		false
+
+	if ownedEgg
+		and ownedEgg.Value ~= "" then
+
+		hasEgg =
+			true
+
+	end
+
+	if not hasEgg then
+
+		local character =
+			player.Character
+
+		if character then
+
+			for _, child in ipairs(
+				character:GetChildren()
+				) do
+
+				if child:IsA("Tool") then
+
+					hasEgg =
+						true
+
+					break
+
+				end
+
+			end
+
+		end
+
+	end
+
+	if not hasEgg then
+
+		local backpack =
+			player:FindFirstChildOfClass(
+				"Backpack"
+			)
+
+		if backpack then
+
+			for _, child in ipairs(
+				backpack:GetChildren()
+				) do
+
+				if child:IsA("Tool") then
+
+					hasEgg =
+						true
+
+					break
+
+				end
+
+			end
+
+		end
+
+	end
+
+	autoButton.Visible =
+		hasEgg
+
+	if hasEgg then
+
+		crackButton.Visible =
+			true
+
+		if not isRevealing
+			and not isCooldown then
+
+			crackButton.Text =
+				"CRACK EGG"
+
+		end
+
+	else
+
+		crackButton.Visible =
+			false
+
+	end
+
+end
+
+-- =========================================================
+-- ATTEMPT CRACK
+-- =========================================================
+
+local function attemptCrack()
+
+	if isRevealing
+		or isCooldown then
+
+		return
+
+	end
+
+	local ownedEgg =
+		player:FindFirstChild(
+			"OwnedEgg"
+		)
+
+	if not ownedEgg
+		or ownedEgg.Value == "" then
+
+		updateCrackButton()
+
+		return
+
+	end
+
+	CrackRequestEvent:
+		FireServer()
+
+end
+
+-- =========================================================
+-- COOLDOWN
+-- =========================================================
+
+local function startCooldown()
+
+	isCooldown =
+		true
+
+	crackButton.Visible =
+		true
+
+	crackButton.Active =
+		false
+
+	crackButton.AutoButtonColor =
+		false
+
+	for remaining =
+		CRACK_COOLDOWN,
+		1,
+		-1 do
+
+		crackButton.Text =
+			"COOLDOWN "
+			.. tostring(
+				remaining
+			)
+
+		crackButton.BackgroundColor3 =
+			Color3.fromRGB(
+				100,
+				100,
+				100
+			)
+
+		task.wait(1)
+
+	end
+
+	isCooldown =
+		false
+
+	crackButton.Active =
+		true
+
+	crackButton.AutoButtonColor =
+		true
+
+	crackButton.BackgroundColor3 =
+		Color3.fromRGB(
+			230,
+			140,
+			40
+		)
+
+	crackButton.Text =
+		"CRACK EGG"
+
+	updateCrackButton()
+
+	if autoCrack then
+
+		task.spawn(
+			function()
+
+				task.wait(
+					0.2
+				)
+
+				if autoCrack
+					and not isRevealing
+					and not isCooldown then
+
+					attemptCrack()
+
+				end
+
+			end
+		)
+
+	end
+
+end
+
+crackButton.MouseButton1Click:Connect(
+	attemptCrack
+)
+
+-- =========================================================
+-- AUTO CRACK
+-- =========================================================
+
+autoButton.MouseButton1Click:Connect(
+	function()
+
+		autoCrack =
+			not autoCrack
+
+		if autoCrack then
+
+			autoButton.Text =
+				"AUTO: ON"
+
+			autoButton.BackgroundColor3 =
+				Color3.fromRGB(
+					60,
+					160,
+					90
+				)
+
+		else
+
+			autoButton.Text =
+				"AUTO: OFF"
+
+			autoButton.BackgroundColor3 =
+				Color3.fromRGB(
+					90,
+					90,
+					110
+				)
+
+		end
+
+		updateCrackButton()
+
+		if autoCrack
+			and not isRevealing
+			and not isCooldown then
+
+			attemptCrack()
+
+		end
+
+	end
+)
+
+-- =========================================================
+-- CHARACTER WATCH
+-- =========================================================
+
+local function watchCharacter(
+	character
+)
+
+	updateCrackButton()
+
+	createOverheadValue(
+		character
+	)
+
+	character.ChildAdded:Connect(
+		function(child)
+
+			if child:IsA("Tool") then
+
+				task.wait()
+
+				updateCrackButton()
+
+			end
+
+		end
+	)
+
+	character.ChildRemoved:Connect(
+		function(child)
+
+			if child:IsA("Tool") then
+
+				task.wait()
+
+				updateCrackButton()
+
+			end
+
+		end
+	)
+
+end
+
+if player.Character then
+
+	watchCharacter(
+		player.Character
+	)
+
+end
+
+player.CharacterAdded:Connect(
+	function(character)
+
+		character:WaitForChild(
+			"Humanoid"
+		)
+
+		task.wait(
+			0.2
+		)
+
+		watchCharacter(
+			character
+		)
+
+	end
+)
+
+-- =========================================================
+-- OWNED EGG WATCH
+-- =========================================================
+
+local existingOwnedEgg =
+	player:FindFirstChild(
+		"OwnedEgg"
+	)
+
+if existingOwnedEgg then
+
+	existingOwnedEgg:
+		GetPropertyChangedSignal(
+			"Value"
+		):
+		Connect(
+			function()
+
+				updateCrackButton()
+
+			end
+		)
+
+	updateCrackButton()
+
+end
+
+player.ChildAdded:Connect(
+	function(child)
+
+		if child.Name ==
+			"OwnedEgg" then
+
+			child:
+				GetPropertyChangedSignal(
+					"Value"
+				):
+				Connect(
+					function()
+
+						updateCrackButton()
+
+					end
+				)
+
+			updateCrackButton()
+
+		end
+
+	end
+)
+
+-- =========================================================
+-- GROUND
+-- =========================================================
+
+local function getGroundY(
+	hrpPos,
+	ignore
+)
+
+	local params =
+		RaycastParams.new()
+
+	params.FilterDescendantsInstances =
+		ignore
+
+	params.FilterType =
+		Enum.RaycastFilterType.Exclude
+
+	local result =
+		workspace:Raycast(
+			hrpPos
+			+ Vector3.new(
+				0,
+				60,
+				0
+			),
+
+			Vector3.new(
+				0,
+				-250,
+				0
+			),
+
+			params
+		)
+
+	if result then
+
+		return result.Position.Y
+
+	end
+
+	return hrpPos.Y - 3
+
+end
+
+-- =========================================================
+-- HOLD POSITION
+-- =========================================================
+
+local function getHoldCFrame(
+	character,
+	hrp
+)
+
+	local hand =
+		character:FindFirstChild(
+			"RightHand"
+		)
+		or character:FindFirstChild(
+			"Right Arm"
+		)
+
+	if hand
+		and hand:IsA("BasePart") then
+
+		return hand.CFrame
+			* CFrame.new(
+				0,
+				-0.7,
+				-0.3
+			)
+
+	end
+
+	return hrp.CFrame
+		* CFrame.new(
+			1.1,
+			1.3,
+			-1.0
+		)
+
+end
+
+-- =========================================================
+-- CREATE GROUND REWARD
+-- =========================================================
+
+local function createGroundReward(
+	itemName,
+	rarity,
+	landPos
+)
+
+	local rewardSource =
+		findItemModel(
+			itemName,
+			rarity
+		)
+
+	if not rewardSource then
+
+		warn(
+			"[ItemsClient] Missing reward model:",
+			itemName
+		)
+
+		return nil
+
+	end
+
+	local ok, clone =
+		pcall(
+			function()
+
+				return ItemViewportUtils
+				.cloneAndAnchor(
+					rewardSource
+				)
+
+			end
+		)
+
+	if not ok
+		or not clone then
+
+		warn(
+			"[ItemsClient] Failed to clone reward:",
+			itemName
+		)
+
+		return nil
+
+	end
+
+	clone.Parent =
+		workspace
+
+	clone:PivotTo(
+		CFrame.new(
+			landPos
+		)
+	)
+
+	return clone
+
+end
+
+-- =========================================================
+-- EFFECTS & HELPERS
+-- =========================================================
+
+local effectsFolder = Instance.new("Folder")
+
+effectsFolder.Name = "EggEffects"
+
+effectsFolder.Parent =
+	workspace
+
+local EGG_BURST_COLOR =
+	Color3.fromRGB(
+		255,
+		235,
+		160
+	)
+
+local function mutationColor(
+	itemName
+)
+
+	local mutation, _ =
+		getItemMutation(
+			itemName
+		)
+
+	if mutation == "Shiny" then
+
+		return Color3.fromRGB(
+			180,
+			220,
+			255
+		)
+
+	end
+
+	if mutation == "Gold" then
+
+		return Color3.fromRGB(
+			255,
+			215,
+			0
+		)
+
+	end
+
+	if mutation == "Diamond" then
+
+		return Color3.fromRGB(
+			120,
+			255,
+			240
+		)
+
+	end
+
+	if mutation == "Rainbow" then
+
+		return Color3.fromHSV(
+			(os.clock() * 0.3) % 1,
+			0.7,
+			1
+		)
+
+	end
+
+	if mutation == "Void" then
+
+		return Color3.fromRGB(
+			80,
+			0,
+			120
+		)
+
+	end
+
+	return nil
+
+end
+
+local function screenFlash(
+	intensity
+)
+
+	intensity =
+		math.clamp(
+			intensity or 0.2,
+			0,
+			1
+		)
+
+	reveal.BackgroundTransparency =
+		1 - intensity
+
+	TweenService:Create(
+		reveal,
+		TweenInfo.new(
+			0.3
+		),
+		{ BackgroundTransparency = 1 }
+	):Play()
+
+end
+
+local function cameraKick(
+	intensity
+)
+
+	local cam =
+		workspace.CurrentCamera
+
+	if not cam then
+		return
+	end
+
+	task.spawn(
+		function()
+
+			local origCF =
+				cam.CFrame
+
+			local shake =
+				0.02
+				* intensity
+
+			for i = 1, 3 do
+
+				cam.CFrame =
+					origCF
+					* CFrame.Angles(
+
+						(math.random() - 0.5)
+							* shake,
+
+						(math.random() - 0.5)
+							* shake,
+
+						0
+
+					)
+
+				task.wait(
+					0.03
+				)
+
+				shake =
+					shake * 0.6
+
+			end
+
+		end
+	)
+
+end
+
+local function shockwave(
+	position,
+	color
+)
+
+	local ring =
+		Instance.new(
+			"Part"
+		)
+
+	ring.Name =
+		"Shockwave"
+
+	ring.Anchored =
+		true
+
+	ring.CanCollide =
+		false
+
+	ring.Material =
+		Enum.Material.Neon
+
+	ring.Color =
+		color
+
+	ring.Transparency =
+		0.3
+
+	ring.Size =
+		Vector3.new(
+			1,
+			0.1,
+			1
+		)
+
+	ring.CFrame =
+		CFrame.new(
+			position
+		)
+
+	ring.Parent =
+		effectsFolder
+
+	TweenService:Create(
+		ring,
+		TweenInfo.new(
+			0.5,
+			Enum.EasingStyle.Quad,
+			Enum.EasingDirection.Out
+		),
+		{
+			Size =
+				Vector3.new(
+					12,
+					0.1,
+					12
+				),
+			Transparency = 1
+		}
+	):Play()
+
+	Debris:AddItem(
+		ring,
+		0.6
+	)
+
+end
+
+local function sparkBurst(
+	position,
+	color,
+	count
+)
+
+	local host =
+		Instance.new(
+			"Part"
+		)
+
+	host.Name =
+		"SparkBurst"
+
+	host.Size =
+		Vector3.new(
+			0.2,
+			0.2,
+			0.2
+		)
+
+	host.Anchored =
+		true
+
+	host.CanCollide =
+		false
+
+	host.Transparency =
+		1
+
+	host.CFrame =
+		CFrame.new(
+			position
+		)
+
+	host.Parent =
+		effectsFolder
+
+	local att =
+		Instance.new(
+			"Attachment"
+		)
+
+	att.Parent =
+		host
+
+	local pe =
+		Instance.new(
+			"ParticleEmitter"
+		)
+
+	pe.Color =
+		ColorSequence.new(
+			color
+		)
+
+	pe.LightEmission =
+		1
+
+	pe.Size =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				1.5
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				0
+			),
+
+		})
+
+	pe.Transparency =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				0
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				1
+			),
+
+		})
+
+	pe.Lifetime =
+		NumberRange.new(
+			0.3,
+			0.6
+		)
+
+	pe.Speed =
+		NumberRange.new(
+			8,
+			18
+		)
+
+	pe.SpreadAngle =
+		Vector2.new(
+			360,
+			360
+		)
+
+	pe.Rate =
+		0
+
+	pe.Parent =
+		att
+
+	pe:Emit(
+		count or 20
+	)
+
+	Debris:AddItem(
+		host,
+		1
+	)
+
+end
+
+local function flashLight(
+	position,
+	color
+)
+
+	local host =
+		Instance.new(
+			"Part"
+		)
+
+	host.Name =
+		"FlashLight"
+
+	host.Size =
+		Vector3.new(
+			0.2,
+			0.2,
+			0.2
+		)
+
+	host.Anchored =
+		true
+
+	host.CanCollide =
+		false
+
+	host.Transparency =
+		1
+
+	host.CFrame =
+		CFrame.new(
+			position
+		)
+
+	host.Parent =
+		effectsFolder
+
+	local light =
+		Instance.new(
+			"PointLight"
+		)
+
+	light.Color =
+		color
+
+	light.Brightness =
+		20
+
+	light.Range =
+		20
+
+	light.Parent =
+		host
+
+	TweenService:Create(
+		light,
+		TweenInfo.new(
+			0.4
+		),
+		{
+			Brightness = 0,
+			Range = 0
+		}
+	):Play()
+
+	Debris:AddItem(
+		host,
+		0.5
+	)
+
+end
+
+local function createEggClone(
+	eggName
+)
+
+	if not eggName
+		or eggName == "" then
+
+		eggName =
+			"Normal Egg"
+
+	end
+
+	local eggModel =
+		workspace:FindFirstChild(
+			eggName,
+			true
+		)
+
+	if not eggModel then
+
+		for _, child in ipairs(
+			workspace:GetChildren()
+			) do
+
+			if child:IsA("MeshPart")
+				or child:IsA("Model") then
+
+				if string.find(
+						string.lower(
+							child.Name
+						),
+						string.lower(
+							eggName
+						)
+					) then
+
+					eggModel =
+						child
+
+					break
+
+				end
+
+			end
+
+		end
+
+	end
+
+	if not eggModel then
+
+		warn(
+			"[ItemsClient] Missing egg model:",
+			eggName
+		)
+
+		return nil
+
+	end
+
+	local clone
+
+	local ok, result =
+		pcall(
+			function()
+
+				return eggModel:Clone()
+
+			end
+		)
+
+	if ok and result then
+
+		clone =
+			result
+
+	else
+
+		return nil
+
+	end
+
+	for _, desc in ipairs(
+		clone:GetDescendants()
+		) do
+
+		if desc:IsA("BasePart") then
+
+			desc.Anchored =
+				true
+
+			desc.CanCollide =
+				false
+
+		end
+
+	end
+
+	if clone:IsA("BasePart") then
+
+		clone.Anchored =
+			true
+
+		clone.CanCollide =
+			false
+
+	end
+
+	clone.Parent =
+		effectsFolder
+
+	return clone
+
+end
+
+local function popReward(
+	rewardClone,
+	landPos,
+	color,
+	direction
+)
+
+	if not rewardClone then
+		return
+	end
+
+	direction =
+		direction or 1
+
+	task.spawn(
+		function()
+
+			local startTime =
+				os.clock()
+
+			local duration =
+				0.8
+
+			while os.clock() - startTime < duration do
+
+				local t =
+					(os.clock() - startTime)
+					/ duration
+
+				local height =
+					math.sin(
+						t * math.pi
+					) * 3
+
+				local scale =
+					0.1
+					+ 0.9
+						* (
+							1
+							- (1 - t)
+								* (1 - t)
+						)
+
+				if rewardClone
+					and rewardClone.Parent then
+
+					rewardClone:PivotTo(
+
+						CFrame.new(
+							landPos
+								+ Vector3.new(
+									0,
+									height,
+									0
+								)
+						)
+							* CFrame.Angles(
+								0,
+								t
+									* math.rad(
+										360
+									)
+									* direction,
+								0
+							)
+
+					)
+
+					pcall(
+						function()
+
+							rewardClone:ScaleTo(
+								scale
+							)
+
+						end
+					)
+
+				end
+
+				task.wait(
+					0.02
+				)
+
+			end
+
+			if rewardClone
+				and rewardClone.Parent then
+
+				rewardClone:PivotTo(
+					CFrame.new(
+						landPos
+					)
+				)
+
+				pcall(
+						function()
+
+							rewardClone:ScaleTo(
+								1
+							)
+
+						end
+					)
+
+			end
+
+		end
+	)
+
+end
+
+local function glowBeam(
+	landPos,
+	color
+)
+
+	local beam =
+		Instance.new(
+			"Part"
+		)
+
+	beam.Name =
+		"GlowBeam"
+
+	beam.Anchored =
+		true
+
+	beam.CanCollide =
+		false
+
+	beam.Material =
+		Enum.Material.Neon
+
+	beam.Color =
+		color
+
+	beam.Transparency =
+		0.6
+
+	beam.Size =
+		Vector3.new(
+			0.5,
+			0.5,
+			25
+		)
+
+	beam.CFrame =
+		CFrame.new(
+			landPos
+				+ Vector3.new(
+					0,
+					12,
+					0
+				)
+		)
+			* CFrame.Angles(
+				math.rad(
+					90
+				),
+				0,
+				0
+			)
+
+	beam.Parent =
+		effectsFolder
+
+	TweenService:Create(
+		beam,
+		TweenInfo.new(
+			0.8
+		),
+		{
+			Transparency = 1,
+			Size =
+				Vector3.new(
+					0.5,
+					0.5,
+					35
+				)
+		}
+	):Play()
+
+	Debris:AddItem(
+		beam,
+		1
+	)
+
+end
+
+-- =========================================================
+-- THROW EGG
+-- =========================================================
+
+local function throwEgg(
+	eggClone,
+	startPos,
+	landPos
+)
+
+	if not eggClone then
+
+		task.wait(
+			0.5
+		)
+
+		return
+
+	end
+
+	local throwDist =
+		(
+			startPos
+			- landPos
+		).Magnitude
+
+	local arcHeight =
+		math.clamp(
+			throwDist * 0.55,
+			4,
+			14
+		)
+
+	local upDir =
+		Vector3.new(
+			0,
+			1,
+			0
+		)
+
+	local throwDir =
+		landPos
+	- startPos
+
+	throwDir =
+		Vector3.new(
+			throwDir.X,
+			0,
+			throwDir.Z
+		)
+
+	if throwDir.Magnitude
+		> 0.01 then
+
+		throwDir =
+			throwDir.Unit
+
+	else
+
+		throwDir =
+			Vector3.new(
+				0,
+				0,
+				-1
+			)
+
+	end
+
+	local sideDir =
+		upDir:Cross(
+			throwDir
+		)
+
+	local trailHost =
+		Instance.new("Part")
+
+	trailHost.Name =
+		"EggTrailHost"
+
+	trailHost.Size =
+		Vector3.new(
+			0.2,
+			0.2,
+			0.2
+		)
+
+	trailHost.Anchored =
+		true
+
+	trailHost.CanCollide =
+		false
+
+	trailHost.Transparency =
+		1
+
+	trailHost.CFrame =
+		CFrame.new(
+			startPos
+		)
+
+	trailHost.Parent =
+		effectsFolder
+
+	local trailAtt =
+		Instance.new("Attachment")
+
+	trailAtt.Parent =
+		trailHost
+
+	local trailPE =
+		Instance.new("ParticleEmitter")
+
+	trailPE.Color =
+		ColorSequence.new({
+
+			ColorSequenceKeypoint.new(
+				0,
+				Color3.fromRGB(
+					255,
+					235,
+					160
+				)
+			),
+
+			ColorSequenceKeypoint.new(
+				0.5,
+				Color3.fromRGB(
+					255,
+					200,
+					80
+				)
+			),
+
+			ColorSequenceKeypoint.new(
+				1,
+				Color3.fromRGB(
+					255,
+					140,
+					40
+				)
+			),
+
+		})
+
+	trailPE.LightEmission =
+		1
+
+	trailPE.LightInfluence =
+		0
+
+	trailPE.Size =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				2.5
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				0
+			),
+
+		})
+
+	trailPE.Transparency =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				0.2
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				1
+			),
+
+		})
+
+	trailPE.Lifetime =
+		NumberRange.new(
+			0.3,
+			0.6
+		)
+
+	trailPE.Rate =
+		0
+
+	trailPE.Speed =
+		NumberRange.new(
+			0.5,
+			2
+		)
+
+	trailPE.SpreadAngle =
+		Vector2.new(
+			20,
+			20
+		)
+
+	trailPE.Parent =
+		trailAtt
+
+	local auraHost =
+		Instance.new("Part")
+
+	auraHost.Name =
+		"EggAuraHost"
+
+	auraHost.Size =
+		Vector3.new(
+			0.2,
+			0.2,
+			0.2
+		)
+
+	auraHost.Anchored =
+		true
+
+	auraHost.CanCollide =
+		false
+
+	auraHost.Transparency =
+		1
+
+	auraHost.CFrame =
+		CFrame.new(
+			startPos
+		)
+
+	auraHost.Parent =
+		effectsFolder
+
+	local auraAtt =
+		Instance.new("Attachment")
+
+	auraAtt.Parent =
+		auraHost
+
+	local auraPE =
+		Instance.new("ParticleEmitter")
+
+	auraPE.Color =
+		ColorSequence.new(
+			Color3.fromRGB(
+				255,
+				220,
+				100
+			)
+		)
+
+	auraPE.LightEmission =
+		1
+
+	auraPE.LightInfluence =
+		0
+
+	auraPE.Size =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				1.5
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				0
+			),
+
+		})
+
+	auraPE.Transparency =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				0
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				1
+			),
+
+		})
+
+	auraPE.Lifetime =
+		NumberRange.new(
+			0.2,
+			0.4
+		)
+
+	auraPE.Rate =
+		0
+
+	auraPE.Speed =
+		NumberRange.new(
+			3,
+			8
+		)
+
+	auraPE.SpreadAngle =
+		Vector2.new(
+			360,
+			360
+		)
+
+	auraPE.Parent =
+		auraAtt
+
+	local eggLight =
+		Instance.new("PointLight")
+
+	eggLight.Color =
+		Color3.fromRGB(
+			255,
+			220,
+			120
+		)
+
+	eggLight.Brightness =
+		8
+
+	eggLight.Range =
+		12
+
+	eggLight.Parent =
+		trailHost
+
+	local chargePE =
+		Instance.new("ParticleEmitter")
+
+	chargePE.Color =
+		ColorSequence.new(
+			Color3.fromRGB(
+				255,
+				240,
+				180
+			)
+		)
+
+	chargePE.LightEmission =
+		1
+
+	chargePE.LightInfluence =
+		0
+
+	chargePE.Size =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				0.5
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				2.5
+			),
+
+		})
+
+	chargePE.Transparency =
+		NumberSequence.new({
+
+			NumberSequenceKeypoint.new(
+				0,
+				1
+			),
+
+			NumberSequenceKeypoint.new(
+				0.5,
+				0.3
+			),
+
+			NumberSequenceKeypoint.new(
+				1,
+				1
+			),
+
+		})
+
+	chargePE.Lifetime =
+		NumberRange.new(
+			0.3,
+			0.5
+		)
+
+	chargePE.Rate =
+		0
+
+	chargePE.Speed =
+		NumberRange.new(
+			2,
+			6
+		)
+
+	chargePE.SpreadAngle =
+		Vector2.new(
+			180,
+			180
+		)
+
+	chargePE.EmissionDirection =
+		Enum.NormalId.Back
+
+	chargePE.Parent =
+		trailAtt
+
+	for i = 1, 6 do
+
+		if not eggClone.Parent then
+
+			trailHost:Destroy()
+			auraHost:Destroy()
+
+			return
+
+		end
+
+		local t =
+			i / 6
+
+		eggClone:PivotTo(
+
+			CFrame.new(
+
+				startPos
+				- throwDir
+					* (0.6 * t)
+				- upDir
+					* (0.25 * t)
+
+			)
+				* CFrame.fromEulerAnglesYXZ(
+
+					math.rad(
+						-25 * t
+					),
+
+					math.rad(
+						10 * t
+					),
+
+					0
+
+				)
+
+		)
+
+		trailHost.CFrame =
+			eggClone:GetPivot()
+
+		chargePE:Emit(
+			4
+		)
+
+		eggLight.Brightness =
+			8 + t * 12
+
+		eggLight.Range =
+			12 + t * 6
+
+		task.wait(
+			0.03
+		)
+
+	end
+
+	sparkBurst(
+		startPos,
+		Color3.fromRGB(
+			255,
+			240,
+			180
+		),
+		25
+	)
+
+	cameraKick(
+		5
+	)
+
+	local throwSteps =
+		32
+
+	local spin =
+		0
+
+	local spinSpeed =
+		math.rad(
+			720
+		)
+
+	for i = 1, throwSteps do
+
+		if not eggClone.Parent then
+
+			trailHost:Destroy()
+			auraHost:Destroy()
+
+			return
+
+		end
+
+		local t =
+			i / throwSteps
+
+		local horizT =
+			1
+		- (1 - t)
+			* (1 - t)
+			* (1 - t)
+
+		local pos =
+			startPos:Lerp(
+				landPos,
+				horizT
+			)
+
+		local arcT =
+			math.sin(
+				math.pi * t
+			)
+
+		pos +=
+			Vector3.new(
+				0,
+				arcT * arcHeight,
+				0
+			)
+
+		pos +=
+			sideDir
+			* math.sin(
+				math.pi
+				* t
+				* 3
+			)
+			* 0.2
+
+		local spinDecay =
+			1
+		- (t * t * 0.5)
+
+		spin +=
+			spinSpeed
+			* (1 / throwSteps)
+			* spinDecay
+
+		eggClone:PivotTo(
+
+			CFrame.new(
+				pos
+			)
+				* CFrame.fromEulerAnglesYXZ(
+
+					spin * 0.5,
+
+					spin,
+
+					spin * 0.2
+
+				)
+
+		)
+
+		trailHost.CFrame =
+			CFrame.new(
+				pos
+			)
+
+		auraHost.CFrame =
+			CFrame.new(
+				pos
+			)
+
+		trailPE:Emit(
+			3
+		)
+
+		auraPE:Emit(
+			5
+		)
+
+		eggLight.Brightness =
+			6
+			+ math.random() * 6
+
+		eggLight.Range =
+			10
+			+ arcT * 6
+
+		local waitTime =
+			0.02
+
+		if t > 0.35
+			and t < 0.65 then
+
+			waitTime =
+				0.035
+
+		end
+
+		task.wait(
+			waitTime
+		)
+
+	end
+
+	if eggClone.Parent then
+
+		eggClone:PivotTo(
+			CFrame.new(
+				landPos
+			)
+		)
+
+		sparkBurst(
+			landPos,
+			Color3.fromRGB(
+				255,
+				235,
+				160
+			),
+			40
+		)
+
+		flashLight(
+			landPos,
+			Color3.fromRGB(
+				255,
+				220,
+				120
+			)
+		)
+
+		shockwave(
+			landPos,
+			Color3.fromRGB(
+				255,
+				235,
+				160
+			)
+		)
+
+		cameraKick(
+			8
+		)
+
+		screenFlash(
+			0.15
+		)
+
+		eggClone:Destroy()
+
+	end
+
+	if trailHost and trailHost.Parent then
+		trailHost:Destroy()
+	end
+
+	if auraHost and auraHost.Parent then
+		auraHost:Destroy()
+	end
+
+end
+
+-- =========================================================
+-- THE 4-EGG CRACK ANIMATION
+-- =========================================================
+
+local function playCrackAnimation(
+	eggName,
+	item1Name,
+	rarity1,
+	item2Name,
+	rarity2,
+	item3Name,
+	rarity3,
+	item4Name,
+	rarity4
+)
+
+	if isRevealing then
+		return
+	end
+
+	isRevealing = true
+
+	local character =
+		player.Character
+
+	local hrp =
+		character
+		and character:FindFirstChild(
+			"HumanoidRootPart"
+		)
+
+	local humanoid =
+		character
+		and character:FindFirstChildOfClass(
+			"Humanoid"
+		)
+
+	if not hrp
+		or not humanoid then
+
+		isRevealing = false
+
+		updateCrackButton()
+
+		return
+
+	end
+
+	local origWalk =
+		humanoid.WalkSpeed
+
+	local origJump =
+		humanoid.JumpPower
+
+	humanoid.WalkSpeed =
+		0
+
+	humanoid.JumpPower =
+		0
+
+	local rewards = {}
+
+	local function addReward(
+		itemName,
+		rarity
+	)
+
+		if itemName ~= nil
+			and rarity ~= nil
+			and tostring(itemName) ~= "" then
+
+			table.insert(
+				rewards,
+				{
+					name = itemName,
+					rarity = rarity,
+				}
+			)
+
+		end
+
+	end
+
+	addReward(
+		item1Name,
+		rarity1
+	)
+
+	addReward(
+		item2Name,
+		rarity2
+	)
+
+	addReward(
+		item3Name,
+		rarity3
+	)
+
+	addReward(
+		item4Name,
+		rarity4
+	)
+
+	if #rewards == 0 then
+
+		isRevealing = false
+
+		humanoid.WalkSpeed =
+			origWalk
+
+		humanoid.JumpPower =
+			origJump
+
+		updateCrackButton()
+
+		return
+
+	end
+
+	local eggs = {}
+
+	local rewardClones = {}
+
+	local function cleanup()
+
+		for _, egg in ipairs(
+			eggs
+			) do
+
+			if egg
+				and egg.Parent then
+
+				egg:Destroy()
+
+			end
+
+		end
+
+		for _, rewardClone in ipairs(
+			rewardClones
+			) do
+
+			if rewardClone
+				and rewardClone.Parent then
+
+				rewardClone:Destroy()
+
+			end
+
+		end
+
+		reveal.Visible =
+			false
+
+		revealTitle.Visible =
+			false
+
+		revealRarity.Visible =
+			false
+
+		revealSub.Visible =
+			false
+
+		if humanoid
+			and humanoid.Parent then
+
+			humanoid.WalkSpeed =
+				origWalk
+
+			humanoid.JumpPower =
+				origJump
+
+		end
+
+		isRevealing =
+			false
+
+		refreshItemsPanel()
+
+		startCooldown()
+
+	end
+
+	local ok, err =
+		pcall(
+			function()
+
+				task.spawn(
+					function()
+
+						local okAC, AC =
+						pcall(
+							function()
+
+								return require(
+									ReplicatedStorage:
+									WaitForChild(
+										"AnimationController"
+									)
+								)
+
+							end
+						)
+
+						if okAC
+							and AC then
+
+							pcall(
+								function()
+
+									AC.Play(
+										"Spell Cast Fireball Animation"
+									)
+
+								end
+							)
+
+						end
+
+					end
+				)
+
+				reveal.Visible =
+				true
+
+				reveal.BackgroundTransparency =
+				1
+
+				local forward =
+				hrp.CFrame.LookVector
+
+				forward =
+				Vector3.new(
+					forward.X,
+					0,
+					forward.Z
+				)
+
+				if forward.Magnitude
+					< 0.001 then
+
+					forward =
+					Vector3.new(
+						0,
+						0,
+						-1
+					)
+
+				end
+
+				forward =
+				forward.Unit
+
+				local right =
+				Vector3.new(
+					forward.Z,
+					0,
+					-forward.X
+				)
+
+				local groundY =
+				getGroundY(
+					hrp.Position,
+					{character}
+				)
+
+				local throwDist =
+				5
+
+				local centerPos =
+				Vector3.new(
+
+					hrp.Position.X
+					+ forward.X
+					* throwDist,
+
+					groundY
+					+ 1.2,
+
+					hrp.Position.Z
+					+ forward.Z
+					* throwDist
+
+				)
+
+				local offsets = {}
+
+				if #rewards == 1 then
+
+					offsets = {
+						0
+					}
+
+				elseif #rewards == 2 then
+
+					offsets = {
+						-1.5,
+						1.5
+					}
+
+				elseif #rewards == 3 then
+
+					offsets = {
+						-2.6,
+						0,
+						2.6
+					}
+
+				else
+
+					offsets = {
+						-3.9,
+						-1.3,
+						1.3,
+						3.9
+					}
+
+				end
+
+				local landPositions = {}
+
+				for i = 1, #rewards do
+
+					landPositions[i] =
+					centerPos
+					+ right
+					* offsets[i]
+
+				end
+
+				-- =================================================
+				-- CREATE ALL EGGS
+				-- =================================================
+
+				local holdCF =
+				getHoldCFrame(
+					character,
+					hrp
+				)
+
+				local startPos =
+				holdCF.Position
+
+				for i = 1, #rewards do
+
+					local eggClone =
+					createEggClone(
+						eggName
+					)
+
+					eggs[i] =
+					eggClone
+
+					if eggClone then
+
+						local holdOffset =
+						offsets[i]
+						* 0.10
+
+						eggClone:PivotTo(
+
+							holdCF
+							* CFrame.new(
+								holdOffset,
+								0,
+								0
+							)
+
+						)
+
+					end
+
+				end
+
+				task.wait(
+					0.15
+				)
+
+				-- =================================================
+				-- THROW ALL EGGS AT ONCE
+				-- =================================================
+
+				for i = 1, #rewards do
+
+					local eggClone =
+					eggs[i]
+
+					local landPos =
+					landPositions[i]
+
+					task.spawn(
+						function()
+
+							local start =
+							startPos
+
+							if eggClone
+								and eggClone.Parent then
+
+								start =
+								eggClone
+								:GetPivot()
+								.Position
+
+							end
+
+							throwEgg(
+								eggClone,
+								start,
+								landPos
+							)
+
+						end
+					)
+
+				end
+
+				task.wait(
+					0.75
+				)
+
+				-- =================================================
+				-- SHAKE ALL EGGS
+				-- =================================================
+
+				for shake = 1, 6 do
+
+					for i = 1, #rewards do
+
+						local eggClone =
+						eggs[i]
+
+						if eggClone
+							and eggClone.Parent then
+
+							local landPos =
+							landPositions[i]
+
+							eggClone:PivotTo(
+
+								CFrame.new(
+
+									landPos
+									+ Vector3.new(
+
+										math.random(
+											-18,
+											18
+										) / 100,
+
+										0,
+
+										math.random(
+											-18,
+											18
+										) / 100
+
+									)
+
+								)
+
+							)
+
+						end
+
+					end
+
+					task.wait(
+						0.04
+					)
+
+				end
+
+				-- =================================================
+				-- CRACK ALL EGGS
+				-- =================================================
+
+				for i = 1, #rewards do
+
+					local eggClone =
+					eggs[i]
+
+					local landPos =
+					landPositions[i]
+
+					if eggClone
+						and eggClone.Parent then
+
+						for spin = 1, 7 do
+
+							if not eggClone.Parent then
+								break
+							end
+
+							eggClone:PivotTo(
+
+								CFrame.new(
+									landPos
+								)
+								* CFrame.Angles(
+
+									0,
+
+									spin
+									* math.rad(
+										140
+									),
+
+									0
+
+								)
+
+							)
+
+							task.wait(
+								0.025
+							)
+
+						end
+
+						shockwave(
+							landPos,
+							EGG_BURST_COLOR
+						)
+
+						sparkBurst(
+							landPos,
+							Color3.fromRGB(
+								255,
+								235,
+								160
+							),
+							45
+						)
+
+						flashLight(
+							landPos,
+							Color3.fromRGB(
+								255,
+								235,
+								160
+							)
+						)
+
+						cameraKick(
+							4
+						)
+
+						eggClone:Destroy()
+
+						eggs[i] =
+						nil
+
+					end
+
+				end
+
+				screenFlash(
+					0.22
+				)
+
+				-- =================================================
+				-- SPAWN ALL ACTUAL REWARD MODELS
+				-- =================================================
+
+				for i, reward in ipairs(
+					rewards
+					) do
+
+					rewardClones[i] =
+					createGroundReward(
+
+						reward.name,
+
+						reward.rarity,
+
+						landPositions[i]
+
+					)
+
+				end
+
+				-- =================================================
+				-- REVEAL TEXT
+				-- =================================================
+
+				local names = {}
+
+				local rarities = {}
+
+				for _, reward in ipairs(
+					rewards
+					) do
+
+					table.insert(
+						names,
+						tostring(
+							reward.name
+						)
+					)
+
+					table.insert(
+						rarities,
+						string.upper(
+							tostring(
+								reward.rarity
+							)
+						)
+					)
+
+				end
+
+				revealTitle.Text =
+				table.concat(
+					names,
+					"  +  "
+				)
+
+				revealTitle.TextColor3 =
+				Color3.fromRGB(
+					255,
+					255,
+					255
+				)
+
+				revealTitle.TextStrokeColor3 =
+				Color3.new(
+					0,
+					0,
+					0
+				)
+
+				revealTitle.TextStrokeTransparency =
+				0
+
+				revealTitle.Visible =
+				true
+
+				revealRarity.Text =
+				table.concat(
+					rarities,
+					" + "
+				)
+
+				revealRarity.TextColor3 =
+				rarityColor(
+					rewards[1].rarity
+				)
+
+				revealRarity.TextStrokeColor3 =
+				Color3.new(
+					0,
+					0,
+					0
+				)
+
+				revealRarity.TextStrokeTransparency =
+				0
+
+				revealRarity.Visible =
+				true
+
+				if #rewards == 1 then
+
+					revealSub.Text =
+					"ITEM RECEIVED!"
+
+				else
+
+					revealSub.Text =
+					tostring(
+						#rewards
+					)
+					.. " ITEMS RECEIVED!"
+
+				end
+
+				revealSub.Visible =
+				true
+
+				-- =================================================
+				-- REWARD EFFECTS FOR EVERY REWARD
+				-- =================================================
+
+				for i, reward in ipairs(
+					rewards
+					) do
+
+					local rewardClone =
+					rewardClones[i]
+
+					local rewardColor =
+					mutationColor(
+						reward.name
+					)
+					or rarityColor(
+						reward.rarity
+					)
+
+					popReward(
+
+						rewardClone,
+
+						landPositions[i],
+
+						rewardColor,
+
+						i % 2 == 0
+						and -1
+						or 1
+
+					)
+
+					glowBeam(
+
+						landPositions[i],
+
+						rewardColor
+
+					)
+
+				end
+
+				task.wait(
+					3
+				)
+
+			end
+		)
+
+	if not ok then
+
+		warn(
+			"[ItemsClient] Crack animation error:",
+			err
+		)
+
+	end
+
+	cleanup()
+
+end
+
+-- =========================================================
+-- ITEM REEL
+-- =========================================================
+
+local function collectItemPool()
+
+	local pool = {}
+
+	for _, folderName in ipairs(
+		ITEM_RARITY_FOLDERS
+		) do
+
+		local folder =
+			workspace:FindFirstChild(
+				folderName,
+				true
+			)
+
+		if folder then
+
+			for _, child in ipairs(
+				folder:GetChildren()
+				) do
+
+				if child:IsA("Model")
+					or child:IsA("BasePart") then
+
+					table.insert(
+						pool,
+						child
+					)
+
+				end
+
+			end
+
+		end
+
+	end
+
+	for _, folderName in pairs(
+		MUTATION_FOLDERS
+		) do
+
+		local folder =
+			workspace:FindFirstChild(
+				folderName,
+				true
+			)
+
+		if folder then
+
+			for _, child in ipairs(
+				folder:GetChildren()
+				) do
+
+				if child:IsA("Model")
+					or child:IsA("BasePart") then
+
+					table.insert(
+						pool,
+						child
+					)
+
+				end
+
+			end
+
+		end
+
+	end
+
+	return pool
+
+end
+
+-- =========================================================
+-- ANCHOR CLONE
+-- =========================================================
+
+local function anchorClone(
+	clone
+)
+
+	if not clone then
+		return
+	end
+
+	for _, descendant in ipairs(
+		clone:GetDescendants()
+		) do
+
+		if descendant:IsA(
+			"BasePart"
+			) then
+
+			descendant.Anchored =
+				true
+
+			descendant.CanCollide =
+				false
+
+		end
+
+	end
+
+end
+
+-- =========================================================
+-- ITEM REEL
+-- =========================================================
+
+local function playItemReel(
+	winnerName
+)
+
+	pcall(
+		function()
+
+			local cam =
+				workspace.CurrentCamera
+
+			if not cam then
+				return
+			end
+
+			local winnerModel =
+				findItemModel(
+					winnerName
+				)
+
+			local pool =
+				collectItemPool()
+
+			local reelItems =
+				{}
+
+			if #pool == 0
+				and not winnerModel then
+
+				return
+
+			end
+
+			local camCF =
+				cam.CFrame
+
+			local rowDist =
+				7
+
+			local spacing =
+				2.4
+
+			local reelCount =
+				10
+
+			local seq =
+				{}
+
+			for i = 1, reelCount do
+
+				if #pool > 0 then
+
+					seq[#seq + 1] =
+						pool[
+					math.random(
+						#pool
+					)
+					]
+
+				end
+
+			end
+
+			if winnerModel then
+
+				seq[#seq + 1] =
+					winnerModel
+
+			elseif #pool > 0 then
+
+				seq[#seq + 1] =
+					pool[
+				math.random(
+					#pool
+				)
+				]
+
+			end
+
+			local total =
+				#seq
+
+			if total == 0 then
+				return
+			end
+
+			for i, model in ipairs(
+				seq
+				) do
+
+				local clone =
+					model:Clone()
+
+				anchorClone(
+					clone
+				)
+
+				pcall(
+					function()
+
+						clone:ScaleTo(
+							1.3
+						)
+
+					end
+				)
+
+				clone:PivotTo(
+
+					camCF
+						* CFrame.new(
+
+							(i - total)
+							* spacing
+							- total
+							* spacing,
+
+							0,
+
+							-rowDist
+
+						)
+
+				)
+
+				clone.Parent =
+					workspace
+
+				reelItems[#reelItems + 1] =
+					clone
+
+			end
+
+			local duration =
+				1.9
+
+			local startOffset =
+				-(total)
+				* spacing
+			- 3
+
+			local t0 =
+				os.clock()
+
+			while true do
+
+				local t =
+					(
+						os.clock()
+						- t0
+					)
+					/ duration
+
+				if t >= 1 then
+					break
+				end
+
+				local eased =
+					1
+				- (1 - t)
+					* (1 - t)
+					* (1 - t)
+
+				local off =
+					startOffset
+					+ (
+						0
+						- startOffset
+					)
+					* eased
+
+				local spin =
+					os.clock()
+					* 5
+
+				for i, clone in ipairs(
+					reelItems
+					) do
+
+					local baseX =
+						(i - total)
+						* spacing
+
+					clone:PivotTo(
+
+						camCF
+							* CFrame.new(
+
+								baseX
+								+ off,
+
+								0,
+
+								-rowDist
+
+							)
+							* CFrame.Angles(
+								0,
+								spin,
+								0
+							)
+
+					)
+
+				end
+
+				task.wait(
+					0.016
+				)
+
+			end
+
+			for _, clone in ipairs(
+				reelItems
+				) do
+
+				if clone
+					and clone.Parent then
+
+					clone:Destroy()
+
+				end
+
+			end
+
+		end
+	)
+
+end
+
+-- =========================================================
+-- SINGLE REWARD
+-- =========================================================
+
+local function handleSingleReward(
+	eggName,
+	itemName,
+	rarity
+)
+
+	if isRevealing then
+		return
+	end
+
+	isRevealing =
+		true
+
+	local character =
+		player.Character
+
+	local hrp =
+		character
+		and character:FindFirstChild(
+			"HumanoidRootPart"
+		)
+
+	local humanoid =
+		character
+		and character:FindFirstChildOfClass(
+			"Humanoid"
+		)
+
+	if not hrp
+		or not humanoid then
+
+		isRevealing =
+			false
+
+		updateCrackButton()
+
+		return
+
+	end
+
+	local origWalk =
+		humanoid.WalkSpeed
+
+	local origJump =
+		humanoid.JumpPower
+
+	humanoid.WalkSpeed =
+		0
+
+	humanoid.JumpPower =
+		0
+
+	local eggClone
+
+	local rewardClone
+
+	local function finish()
+
+		if eggClone
+			and eggClone.Parent then
+
+			eggClone:Destroy()
+
+		end
+
+		if rewardClone
+			and rewardClone.Parent then
+
+			rewardClone:Destroy()
+
+		end
+
+		reveal.Visible =
+			false
+
+		revealTitle.Visible =
+			false
+
+		revealRarity.Visible =
+			false
+
+		revealSub.Visible =
+			false
+
+		if humanoid
+			and humanoid.Parent then
+
+			humanoid.WalkSpeed =
+				origWalk
+
+			humanoid.JumpPower =
+				origJump
+
+		end
+
+		isRevealing =
+			false
+
+		refreshItemsPanel()
+
+		startCooldown()
+
+	end
+
+	local ok, err =
+		pcall(
+			function()
+
+				task.spawn(
+					function()
+
+						local okAC, AC =
+						pcall(
+							function()
+
+								return require(
+									ReplicatedStorage:
+									WaitForChild(
+										"AnimationController"
+									)
+								)
+
+							end
+						)
+
+						if okAC
+							and AC then
+
+							pcall(
+								function()
+
+									AC.Play(
+										"Spell Cast Fireball Animation"
+									)
+
+								end
+							)
+
+						end
+
+					end
+				)
+
+				reveal.Visible =
+				true
+
+				reveal.BackgroundTransparency =
+				1
+
+				local forward =
+				hrp.CFrame.LookVector
+
+				forward =
+				Vector3.new(
+					forward.X,
+					0,
+					forward.Z
+				)
+
+				if forward.Magnitude
+					< 0.001 then
+
+					forward =
+					Vector3.new(
+						0,
+						0,
+						-1
+					)
+
+				end
+
+				forward =
+				forward.Unit
+
+				local groundY =
+				getGroundY(
+					hrp.Position,
+					{character}
+				)
+
+				local landPos =
+				Vector3.new(
+
+					hrp.Position.X
+					+ forward.X * 5,
+
+					groundY + 1.2,
+
+					hrp.Position.Z
+					+ forward.Z * 5
+
+				)
+
+				eggClone =
+				createEggClone(
+					eggName
+				)
+
+				local holdCF =
+				getHoldCFrame(
+					character,
+					hrp
+				)
+
+				if eggClone then
+
+					eggClone:PivotTo(
+						holdCF
+					)
+
+					task.wait(
+						0.15
+					)
+
+					throwEgg(
+
+						eggClone,
+
+						eggClone
+						:GetPivot()
+						.Position,
+
+						landPos
+
+					)
+
+					task.wait(
+						0.1
+					)
+
+					for i = 1, 6 do
+
+						if not eggClone.Parent then
+							break
+						end
+
+						eggClone:PivotTo(
+
+							CFrame.new(
+
+								landPos
+								+ Vector3.new(
+
+									math.random(
+										-18,
+										18
+									) / 100,
+
+									0,
+
+									math.random(
+										-18,
+										18
+									) / 100
+
+								)
+
+							)
+
+						)
+
+						task.wait(
+							0.04
+						)
+
+					end
+
+					for i = 1, 7 do
+
+						if not eggClone.Parent then
+							break
+						end
+
+						eggClone:PivotTo(
+
+							CFrame.new(
+								landPos
+							)
+							* CFrame.Angles(
+								0,
+								i
+								* math.rad(
+									140
+								),
+								0
+							)
+
+						)
+
+						task.wait(
+							0.03
+						)
+
+					end
+
+					shockwave(
+						landPos,
+						EGG_BURST_COLOR
+					)
+
+					sparkBurst(
+						landPos,
+						Color3.fromRGB(
+							255,
+							235,
+							160
+						),
+						50
+					)
+
+					flashLight(
+						landPos,
+						Color3.fromRGB(
+							255,
+							235,
+							160
+						)
+					)
+
+					screenFlash(
+						0.22
+					)
+
+					cameraKick(
+						7
+					)
+
+					eggClone:Destroy()
+
+					eggClone =
+					nil
+
+				end
+
+				rewardClone =
+				createGroundReward(
+					itemName,
+					rarity,
+					landPos
+				)
+
+				revealTitle.Text =
+				tostring(
+					itemName
+				)
+
+				revealTitle.TextColor3 =
+				Color3.fromRGB(
+					255,
+					255,
+					255
+				)
+
+				revealTitle.TextStrokeColor3 =
+				Color3.new(
+					0,
+					0,
+					0
+				)
+
+				revealTitle.TextStrokeTransparency =
+				0
+
+				revealTitle.Visible =
+				true
+
+				revealRarity.Text =
+				string.upper(
+					tostring(
+						rarity
+					)
+				)
+				.. " ITEM"
+
+				revealRarity.TextColor3 =
+				rarityColor(
+					rarity
+				)
+
+				revealRarity.TextStrokeColor3 =
+				Color3.new(
+					0,
+					0,
+					0
+				)
+
+				revealRarity.TextStrokeTransparency =
+				0
+
+				revealRarity.Visible =
+				true
+
+				revealSub.Text =
+				"Added to your Items inventory!"
+
+				revealSub.Visible =
+				true
+
+				local rewardColor =
+				mutationColor(
+					itemName
+				)
+				or rarityColor(
+					rarity
+				)
+
+				popReward(
+					rewardClone,
+					landPos,
+					rewardColor,
+					1
+				)
+
+				glowBeam(
+					landPos,
+					rewardColor
+				)
+
+				task.wait(
+					3
+				)
+
+			end
+		)
+
+	if not ok then
+
+		warn(
+			"[ItemsClient] Single crack error:",
+			err
+		)
+
+	end
+
+	finish()
+
+end
+
+-- =========================================================
+-- CRACK CONFIRM
+-- =========================================================
+
+CrackConfirmEvent.OnClientEvent:Connect(
+	function(
+		success,
+		item1,
+		rarity1,
+		item2,
+		rarity2,
+		item3,
+		rarity3,
+		item4,
+		rarity4
+	)
+
+		if not success then
+
+			warn(
+				"[ItemsClient] Crack rejected:",
+				tostring(
+					item1
+				)
+			)
+
+			isRevealing =
+				false
+
+			updateCrackButton()
+
+			if autoCrack then
+
+				task.spawn(
+					function()
+
+						task.wait(
+							1
+						)
+
+						if autoCrack
+							and not isRevealing
+							and not isCooldown then
+
+							attemptCrack()
+
+						end
+
+					end
+				)
+
+			end
+
+			return
+
+		end
+
+		local ownedEgg =
+			player:FindFirstChild(
+				"OwnedEgg"
+			)
+
+		local eggName =
+			""
+
+		if ownedEgg then
+
+			eggName =
+				ownedEgg.Value
+
+		end
+
+		-- =====================================================
+		-- 1X / 2X / 3X / 4X REWARDS
+		-- =====================================================
+
+		local rewardCount =
+			0
+
+		if item1 ~= nil
+			and rarity1 ~= nil then
+
+			rewardCount +=
+				1
+
+		end
+
+		if item2 ~= nil
+			and rarity2 ~= nil then
+
+			rewardCount +=
+				1
+
+		end
+
+		if item3 ~= nil
+			and rarity3 ~= nil then
+
+			rewardCount +=
+				1
+
+		end
+
+		if item4 ~= nil
+			and rarity4 ~= nil then
+
+			rewardCount +=
+				1
+
+		end
+
+		print(
+			"[ItemsClient] CRACK:",
+			rewardCount,
+			"REWARDS"
+		)
+
+		playCrackAnimation(
+
+			eggName,
+
+			item1,
+			rarity1,
+
+			item2,
+			rarity2,
+
+			item3,
+			rarity3,
+
+			item4,
+			rarity4
+
+		)
+
+	end
+)
+
+-- =========================================================
+-- INVENTORY SYNC
+-- =========================================================
+
+InventorySyncEvent.OnClientEvent:Connect(
+	function(inv)
+
+		localInventory =
+			inv or {}
+
+		refreshItemsPanel()
+
+		updateCrackButton()
+
+		updateOverheadValue()
+
+	end
+)
+
+-- =========================================================
+-- SELL CONFIRM
+-- =========================================================
+
+local SUFFIXES = {
+	"",
+	"K",
+	"M",
+	"B",
+	"T",
+	"Qa",
+	"Qi",
+	"Sx",
+	"Sp",
+	"Oc",
+	"No",
+	"Dc",
+	"UDc",
+	"DDc",
+	"TDc",
+	"QaDc",
+	"QiDc",
+	"SxDc",
+	"SpDc",
+	"OcDc",
+	"NoDc",
+	"Vg",
+	"UVg",
+	"DVg",
+	"TVg",
+	"QaVg",
+	"QiVg",
+	"SxVg",
+	"SpVg",
+	"OcVg",
+	"NoVg",
+	"Tg",
+	"UTg",
+	"DTg",
+	"TTg",
+	"QaTg",
+	"QiTg",
+	"SxTg",
+	"SpTg",
+	"OcTg",
+	"NoTg",
+	"qg",
+	"Uqg",
+	"Dqg",
+	"Tqg",
+	"Qaqg",
+	"Qiqg",
+	"Sxqg",
+	"Spqg",
+	"Ocqg",
+	"Noqg",
+	"sg",
+	"Usg",
+	"Dsg",
+	"Tsg",
+	"Qasg",
+	"Qisg",
+	"Sxsg",
+	"Spsg",
+	"Ocsg",
+	"Nosg",
+	"Og",
+	"UOg",
+	"DOg",
+	"TOg",
+	"QaOg",
+	"QiOg",
+	"SxOg",
+	"SpOg",
+	"OcOg",
+	"NoOg",
+	"Ng",
+	"UNg",
+	"DNg",
+	"TNg",
+	"QaNg",
+	"QiNg",
+	"SxNg",
+	"SpNg",
+	"OcNg",
+	"NoNg",
+	"Ce",
+	"UCe",
+	"DCe",
+	"TCe",
+	"QaCe",
+	"QiCe",
+	"SxCe",
+	"SpCe",
+	"OcCe",
+	"NoCe",
+}
+
+local function abbreviateNumber(value)
+
+	value =
+		math.floor(
+			tonumber(value)
+			or 0
+		)
+
+	local negative =
+		value < 0
+
+	value =
+		math.abs(
+			value
+		)
+
+	if value < 1000 then
+
+		return
+			(negative and "-" or "")
+			.. tostring(
+				value
+			)
+
+	end
+
+	local tier =
+		math.floor(
+			math.log10(
+				value
+			) / 3
+		)
+
+	if tier >= #SUFFIXES then
+
+		local exp =
+			math.floor(
+				math.log10(
+					value
+				)
+			)
+
+		local mantissa =
+			value
+			/ (
+				10 ^ exp
+			)
+
+		return
+			(negative and "-" or "")
+			.. string.format(
+				"%.2fe%d",
+				mantissa,
+				exp
+			)
+
+	end
+
+	local suffix =
+		SUFFIXES[
+	tier + 1
+	]
+
+	local scaled =
+		value
+		/ (
+			10 ^ (
+				tier * 3
+			)
+		)
+
+	local formatted
+
+	if scaled >= 100 then
+
+		formatted =
+			string.format(
+				"%.1f",
+				scaled
+			)
+
+	elseif scaled >= 10 then
+
+		formatted =
+			string.format(
+				"%.2f",
+				scaled
+			)
+
+	else
+
+		formatted =
+			string.format(
+				"%.2f",
+				scaled
+			)
+
+	end
+
+	formatted =
+		formatted:gsub(
+			"(%d)%.(%d%d+)$",
+			function(
+				whole,
+				dec
+			)
+
+				dec =
+				dec:gsub(
+					"0+$",
+					""
+				)
+
+				if dec == "" then
+					return whole
+				end
+
+				return
+				whole
+				.. "."
+				.. dec
+
+			end
+		)
+
+	return
+		(negative and "-" or "")
+		.. formatted
+		.. suffix
+
+end
+
+-- =========================================================
+-- SELL CONFIRM EVENT
+-- =========================================================
+
+SellAllConfirmEvent.OnClientEvent:Connect(
+	function(total)
+
+		local toast =
+			Instance.new("TextLabel")
+
+		toast.Size =
+			UDim2.new(
+				0,
+				320,
+				0,
+				44
+			)
+
+		toast.Position =
+			UDim2.new(
+				0.5,
+				-160,
+				0,
+				120
+			)
+
+		toast.BackgroundColor3 =
+			Color3.fromRGB(
+				40,
+				90,
+				55
+			)
+
+		toast.BackgroundTransparency =
+			0.1
+
+		toast.BorderSizePixel =
+			0
+
+		if total > 0 then
+
+			toast.Text =
+				"Sold all items for $"
+				.. abbreviateNumber(
+					total
+				)
+
+		else
+
+			toast.Text =
+				"No items to sell"
+
+		end
+
+		toast.TextColor3 =
+			Color3.fromRGB(
+				220,
+				255,
+				220
+			)
+
+		toast.TextSize =
+			20
+
+		toast.Font =
+			Enum.Font.FredokaOne
+
+		toast.ZIndex =
+			200
+
+		toast.Parent =
+			gui
+
+		local tc =
+			Instance.new("UICorner")
+
+		tc.CornerRadius =
+			UDim.new(
+				0,
+				8
+			)
+
+		tc.Parent =
+			toast
+
+		Debris:AddItem(
+			toast,
+			2
+		)
+
+	end
+)
+
+-- =========================================================
+-- INITIAL LOAD
+-- =========================================================
+
+InventoryRequestEvent:
+	FireServer()
+
+updateCrackButton()
+
+print(
+	"[ItemsClient] Loaded."
+)
+
+print(
+	"[ItemsClient] World 1 + World 2 rarity folders enabled."
+)
+
+print(
+	"[ItemsClient] Shiny/Gold/Diamond/Rainbow/Void mutation folders enabled."
+)
+
+print(
+	"[ItemsClient] Mutated rewards use their actual mutation models."
+)
+
+print(
+	"[ItemsClient] 1X/2X/3X/4X visual crack system enabled."
+)
